@@ -12,6 +12,10 @@ The model works directly in 512×512 RGB pixel space with a six-level U-Net (64,
 
 ![100 tiles from the training dataset, labeled Urban, Rural, Water](docs/training_data.png)
 
+## Model Inputs + Outputs
+
+![Inputs + Outputs](docs/citydiffusion2_generation_equation.png)
+
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright). The training tiles are derived from OpenStreetMap data, available under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
 
 The source code in this repository is MIT licensed; see [LICENSE](LICENSE). Data and model weights retain their respective licenses.
@@ -49,7 +53,7 @@ sampler = DDIMScheduler.from_config(
     clip_sample_range=1.0,
 )
 
-def generate(context, mask, condition, seed=42, steps=100, source_rgb=None):
+def generate(context, mask, condition, seed=42, steps=100):
     condition_maps = condition[:, :, None, None].expand(-1, -1, 512, 512)
     sampler.set_timesteps(steps, device=device)
     generator = torch.Generator(device=device).manual_seed(seed)
@@ -67,10 +71,16 @@ def generate(context, mask, condition, seed=42, steps=100, source_rgb=None):
                 velocity, timestep, image, eta=0.0, use_clipped_model_output=True
             ).prev_sample
 
-    pixels = image[0].add(1).div(2).clamp(0, 1).mul(255).byte().permute(1, 2, 0).cpu().numpy()
-    if source_rgb is not None:
-        preserve = mask[0, 0].byte().cpu().numpy().astype(bool)
-        pixels[preserve] = source_rgb[preserve]
+    pixels = (
+        image[0].add(1).div(2).clamp(0, 1).mul(255).round().byte()
+        .permute(1, 2, 0).cpu().numpy()
+    )
+    context_pixels = (
+        context[0].add(1).div(2).clamp(0, 1).mul(255).round().byte()
+        .permute(1, 2, 0).cpu().numpy()
+    )
+    preserve = mask[0, 0].bool().cpu().numpy()
+    pixels[preserve] = context_pixels[preserve]
     return Image.fromarray(pixels)
 ```
 
@@ -88,7 +98,7 @@ generate(context, mask, condition).save("unconditional.png")
 
 ## Conditioned generation
 
-This example uses 70% rural, 20% urban, and 10% water, preserving the top-left 128×128 context tile.
+This example uses 70% rural, 20% urban, and 10% water, preserving the top-left 128×128 context tile. Put an RGB map image at `context.png`; it will be resized to 512×512 using nearest-neighbor sampling. Masked context pixels are copied exactly into the output.
 
 ```python
 source_rgb = np.asarray(
@@ -99,7 +109,7 @@ mask = torch.zeros((1, 1, 512, 512), device=device)
 mask[:, :, :128, :128] = 1
 condition = torch.tensor([[0.7, 0.2, 0.1, 1.0]], device=device)
 
-generate(context, mask, condition, source_rgb=source_rgb).save("conditioned.png")
+generate(context, mask, condition).save("conditioned.png")
 ```
 
 ## Training pipeline
