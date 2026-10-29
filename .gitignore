@@ -1,0 +1,28 @@
+# Python environments and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Local datasets, caches, checkpoints, and training outputs
+data/
+cache/
+checkpoints/
+runs/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Notebook and test artifacts
+.ipynb_checkpoints/
+.pytest_cache/
+.coverage
+
+# Logs
+*.log

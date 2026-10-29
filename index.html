@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>City Diffusion Generator</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: system-ui, sans-serif;
+            color: #edf3fa;
+            background: #0b0e12;
+            font-synthesis: none;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; min-height: 100vh; }
+        main {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 270px;
+            align-items: start;
+            gap: 18px;
+            max-width: 1380px;
+            margin: 20px auto;
+            padding: 16px;
+        }
+        .world-panel, aside {
+            background: #151a21;
+            border: 1px solid #34404d;
+            border-radius: 12px;
+        }
+        .world-panel { min-width: 0; padding: 14px; }
+        header { margin: 0 0 12px; }
+        h1 { margin: 0; font-size: 20px; }
+        .subtitle, .hint { color: #9dacbc; font-size: 13px; line-height: 1.5; }
+        .subtitle { margin: 5px 0 0; }
+        .world-stage {
+            position: relative;
+            width: min(100%, 1024px);
+            aspect-ratio: 1;
+            margin: auto;
+            overflow: hidden;
+            background: #161c22;
+            border: 1px solid #3c4854;
+            border-radius: 5px;
+            cursor: crosshair;
+            touch-action: manipulation;
+        }
+        .world-stage canvas {
+            position: absolute;
+            inset: 0;
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #overlayCanvas { pointer-events: none; }
+        .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 12px 2px 0; }
+        .legend span { color: #aebbc9; font-size: 12px; }
+        .swatch { display: inline-block; width: 11px; height: 11px; margin-right: 5px; border-radius: 2px; }
+        aside { padding: 16px; }
+        h2 { margin: 0 0 12px; font-size: 16px; }
+        button {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #34404d;
+            border-radius: 7px;
+            color: #edf3fa;
+            background: #192a38;
+            cursor: pointer;
+        }
+        button:hover:not(:disabled) { border-color: #4fd9ff; }
+        button:disabled { cursor: wait; opacity: .6; }
+        #reset { margin-bottom: 16px; }
+        .group { margin: 0 0 16px; }
+        .group label, .condition-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 7px;
+            font-size: 13px;
+        }
+        input[type="range"] { width: 100%; accent-color: #4fd9ff; }
+        .preview { margin: 0 0 12px; }
+        .preview p { margin: 0 0 5px; color: #c3ced9; font-size: 13px; }
+        .preview canvas {
+            display: block;
+            width: min(100%, 210px);
+            aspect-ratio: 1;
+            background: #0b0e12;
+            border: 1px solid #34404d;
+            image-rendering: pixelated;
+        }
+        .conditioning { margin: 14px 0; }
+        #conditionTriangle {
+            display: block;
+            width: 100%;
+            height: auto;
+            touch-action: none;
+            cursor: crosshair;
+            user-select: none;
+            border-radius: 6px;
+        }
+        #conditionTriangle:focus-visible { outline: 2px solid #4fd9ff; outline-offset: 3px; }
+        .condition-values { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+        .condition-values span { display: grid; gap: 4px; text-align: center; }
+        .condition-values strong { color: #edf3fa; }
+        .rural { color: #75d98a; }
+        .urban { color: #e8b785; }
+        .water { color: #6fc2ff; }
+        .status { min-height: 38px; margin: 12px 0 0; color: #aebbc9; font-size: 12px; line-height: 1.45; }
+        .status.error { color: #ff8b8b; }
+        .model-id { color: #4fd9ff; font-family: ui-monospace, monospace; }
+        @media (max-width: 800px) {
+            main { grid-template-columns: 1fr; margin: 0; padding: 10px; }
+            aside { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+            aside h2, #reset, .steps-control, .conditioning, .status { grid-column: 1 / -1; }
+            .conditioning { max-width: 300px; }
+            .preview canvas { width: min(100%, 210px); }
+        }
+        @media (max-width: 470px) {
+            .world-panel { padding: 8px; }
+            aside { display: block; }
+        }
+    </style>
+</head>
+<body>
+<main>
+    <section class="world-panel">
+        <header>
+            <h1>City Diffusion Generator</h1>
+            <p class="subtitle">Click to generate a 256×256 patch on a 2048×2048 world using native 512×512 context. Only existing map pixels are preserved.</p>
+        </header>
+        <div class="world-stage" id="worldStage">
+            <canvas id="patchCanvas" width="2048" height="2048" aria-label="Generated city world"></canvas>
+            <canvas id="overlayCanvas" width="2048" height="2048" aria-hidden="true"></canvas>
+        </div>
+        <div class="legend">
+            <span><i class="swatch" style="background:#00e6a0"></i>Context</span>
+            <span><i class="swatch" style="background:#ff5d68"></i>Generated patch</span>
+            <span><i class="swatch" style="background:#28d8e8"></i>Queued</span>
+        </div>
+    </section>
+
+    <aside>
+        <h2>Generation</h2>
+        <button id="reset" type="button">Reset World</button>
+        <button id="download" type="button">Download World PNG</button>
+
+        <div class="group steps-control">
+            <label for="inferenceSteps"><span id="inferenceStepsLabel">Inference Steps</span><strong id="stepsValue">100</strong></label>
+            <input type="range" id="inferenceSteps" min="10" max="200" value="100">
+            <p class="hint">The API accepts 10–200 steps.</p>
+        </div>
+
+        <section class="conditioning" aria-labelledby="conditionHeading">
+            <h2 id="conditionHeading">Map mixture</h2>
+            <svg id="conditionTriangle" viewBox="0 0 260 240" width="260" height="240" tabindex="0" role="group" aria-label="Map mixture" aria-describedby="conditionHint">
+                <defs>
+                    <linearGradient id="urbanGradient" x1="0" y1="1" x2="0.75" y2="0.5" gradientUnits="objectBoundingBox">
+                        <stop offset="0" stop-color="#dca26d" />
+                        <stop offset="1" stop-color="#dca26d" stop-opacity="0" />
+                    </linearGradient>
+                    <linearGradient id="waterGradient" x1="1" y1="1" x2="0.25" y2="0.5" gradientUnits="objectBoundingBox">
+                        <stop offset="0" stop-color="#4daef5" />
+                        <stop offset="1" stop-color="#4daef5" stop-opacity="0" />
+                    </linearGradient>
+                </defs>
+                <path d="M130 28 L24 212 L236 212 Z" fill="#68be7c" />
+                <path d="M130 28 L24 212 L236 212 Z" fill="url(#urbanGradient)" />
+                <path d="M130 28 L24 212 L236 212 Z" fill="url(#waterGradient)" stroke="#b6c5d1" stroke-width="1.5" />
+                <path d="M77 120 H183 M77 120 L130 212 M183 120 L130 212" fill="none" stroke="#ffffff" stroke-opacity="0.25" />
+                <text x="130" y="16" text-anchor="middle" fill="#75d98a" font-size="13">Rural</text>
+                <text x="24" y="234" text-anchor="middle" fill="#e8b785" font-size="13">Urban</text>
+                <text x="236" y="234" text-anchor="middle" fill="#6fc2ff" font-size="13">Water</text>
+                <circle id="conditionMarker" cx="119.4" cy="83.2" r="7" fill="#fff" stroke="#101923" stroke-width="3" pointer-events="none" />
+            </svg>
+            <div class="condition-values">
+                <span class="rural">Rural<strong id="ruralValue">70%</strong></span>
+                <span class="urban">Urban<strong id="urbanValue">20%</strong></span>
+                <span class="water">Water<strong id="waterValue">10%</strong></span>
+            </div>
+            <p id="conditionHint" class="hint">Click or drag to mix. Corners select 100% of that type; the center mixes all three equally. Arrow keys adjust; Home selects the center. Targets always total 100%.</p>
+        </section>
+
+        <div class="preview">
+            <p>Input Context</p>
+            <canvas id="contextCanvas" width="512" height="512" aria-label="Latest context image"></canvas>
+        </div>
+        <div class="preview">
+            <p>Mask</p>
+            <canvas id="maskCanvas" width="512" height="512" aria-label="Preserved context and generated patch mask"></canvas>
+        </div>
+        <div class="preview">
+            <p>Result</p>
+            <canvas id="resultCanvas" width="512" height="512" aria-label="Latest generated result"></canvas>
+        </div>
+
+        <p id="status" class="status" role="status">Model: <span class="model-id">bart1259/CityDiffusion2</span></p>
+    </aside>
+</main>
+
+<script>
+(() => {
+    const WORLD_SIZE = 2048;
+    const CONTEXT_SIZE = 512;
+    const PATCH_SIZE = 256;
+    const SNAP_SIZE = 128;
+    const canvas = document.getElementById("patchCanvas");
+    const ctx = canvas.getContext("2d");
+    const overlay = document.getElementById("overlayCanvas");
+    const overlayCtx = overlay.getContext("2d");
+    const worldImage = ctx.createImageData(WORLD_SIZE, WORLD_SIZE);
+    const world = worldImage.data;
+    const contextCanvas = document.getElementById("contextCanvas");
+    const contextCtx = contextCanvas.getContext("2d");
+    const maskCanvas = document.getElementById("maskCanvas");
+    const maskCtx = maskCanvas.getContext("2d");
+    const resultCanvas = document.getElementById("resultCanvas");
+    const resultCtx = resultCanvas.getContext("2d");
+    const stage = document.getElementById("worldStage");
+    const status = document.getElementById("status");
+    const triangle = document.getElementById("conditionTriangle");
+    const marker = document.getElementById("conditionMarker");
+    // API order: rural, urban, water. Positions use the SVG viewBox coordinates.
+    const vertices = [{ x: 130, y: 28 }, { x: 24, y: 212 }, { x: 236, y: 212 }];
+    let conditions = [0.7, 0.2, 0.1];
+    const queue = [];
+    const generationTimes = [];
+    let mouse = { x: 0, y: 0 };
+    let cursorVisible = false;
+    let nextJobId = 0;
+    let activeJob = null;
+    let activeController = null;
+    let processing = false;
+    let worldRevision = 0;
+    let generationStartedAt = 0;
+
+    function conditionPosition() {
+        return vertices.reduce((point, vertex, i) => ({
+            x: point.x + vertex.x * conditions[i],
+            y: point.y + vertex.y * conditions[i],
+        }), { x: 0, y: 0 });
+    }
+
+    function conditionsAtPoint(x, y) {
+        const weightsAt = (px, py) => {
+            const rural = (212 - py) / 184;
+            const water = ((px - 24) / 212) - rural / 2;
+            return [rural, 1 - rural - water, water];
+        };
+        let weights = weightsAt(x, y);
+        if (weights.some(value => value < 0)) {
+            // Project an outside pointer to the nearest edge, not a distorted
+            // mixture obtained by merely clamping individual weights.
+            let nearest = null;
+            for (let i = 0; i < vertices.length; i++) {
+                const a = vertices[i];
+                const b = vertices[(i + 1) % vertices.length];
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy)));
+                const point = { x: a.x + t * dx, y: a.y + t * dy };
+                const distance = (point.x - x) ** 2 + (point.y - y) ** 2;
+                if (!nearest || distance < nearest.distance) nearest = { ...point, distance };
+            }
+            weights = weightsAt(nearest.x, nearest.y);
+        }
+        weights = weights.map(value => Math.max(0, Math.min(1, value)));
+        const total = weights.reduce((sum, value) => sum + value, 0);
+        return weights.map(value => value / total);
+    }
+
+    function setConditions(values) {
+        conditions = values;
+        const point = conditionPosition();
+        marker.setAttribute("cx", point.x);
+        marker.setAttribute("cy", point.y);
+        // Largest-remainder rounding keeps the displayed total at exactly 100%.
+        const percentages = conditions.map(value => Math.floor(value * 100));
+        const order = conditions.map((value, i) => ({ i, fraction: value * 100 - percentages[i] }))
+            .sort((a, b) => b.fraction - a.fraction);
+        const remainder = 100 - percentages.reduce((sum, value) => sum + value, 0);
+        for (let i = 0; i < remainder; i++) percentages[order[i].i]++;
+        for (const [i, name] of ["rural", "urban", "water"].entries()) {
+            document.getElementById(`${name}Value`).textContent = `${percentages[i]}%`;
+        }
+        triangle.setAttribute("aria-label", `Map mixture: rural ${percentages[0]}%, urban ${percentages[1]}%, water ${percentages[2]}%`);
+    }
+
+    function selectConditionFromPointer(event) {
+        const rect = triangle.getBoundingClientRect();
+        setConditions(conditionsAtPoint(
+            (event.clientX - rect.left) * 260 / rect.width,
+            (event.clientY - rect.top) * 240 / rect.height
+        ));
+    }
+
+    triangle.addEventListener("pointerdown", event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        triangle.focus();
+        triangle.setPointerCapture(event.pointerId);
+        selectConditionFromPointer(event);
+    });
+    triangle.addEventListener("pointermove", event => {
+        if (triangle.hasPointerCapture(event.pointerId)) selectConditionFromPointer(event);
+    });
+    function releaseConditionPointer(event) {
+        if (triangle.hasPointerCapture(event.pointerId)) triangle.releasePointerCapture(event.pointerId);
+    }
+    triangle.addEventListener("pointerup", releaseConditionPointer);
+    triangle.addEventListener("pointercancel", releaseConditionPointer);
+    triangle.addEventListener("keydown", event => {
+        const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+        if (event.key === "Home") {
+            event.preventDefault();
+            setConditions([1 / 3, 1 / 3, 1 / 3]);
+        } else if (direction) {
+            event.preventDefault();
+            const point = conditionPosition();
+            const step = event.shiftKey ? 10 : 2;
+            setConditions(conditionsAtPoint(point.x + direction[0] * step, point.y + direction[1] * step));
+        }
+    });
+
+    function setStatus(message, isError = false) {
+        status.textContent = message;
+        status.classList.toggle("error", isError);
+    }
+
+    function clearWorld() {
+        worldRevision++;
+        queue.length = 0;
+        activeController?.abort();
+        activeController = null;
+        activeJob = null;
+        world.fill(0);
+        ctx.putImageData(worldImage, 0, 0);
+        for (const previewCtx of [contextCtx, maskCtx, resultCtx]) {
+            previewCtx.clearRect(0, 0, CONTEXT_SIZE, CONTEXT_SIZE);
+        }
+        setStatus("World reset. Click anywhere to generate a patch.");
+    }
+
+    function snap(value) {
+        return Math.floor((value - SNAP_SIZE / 2) / SNAP_SIZE) * SNAP_SIZE + SNAP_SIZE;
+    }
+
+    function currentCorner() {
+        const centerX = snap(mouse.x);
+        const centerY = snap(mouse.y);
+        return { x: centerX - CONTEXT_SIZE / 2, y: centerY - CONTEXT_SIZE / 2 };
+    }
+
+    function buildContext(corner) {
+        const image = contextCtx.createImageData(CONTEXT_SIZE, CONTEXT_SIZE);
+        for (let y = 0; y < CONTEXT_SIZE; y++) {
+            const worldY = corner.y + y;
+            if (worldY < 0 || worldY >= WORLD_SIZE) continue;
+            for (let x = 0; x < CONTEXT_SIZE; x++) {
+                const worldX = corner.x + x;
+                if (worldX < 0 || worldX >= WORLD_SIZE) continue;
+                const from = (worldY * WORLD_SIZE + worldX) * 4;
+                const to = (y * CONTEXT_SIZE + x) * 4;
+                image.data[to] = world[from];
+                image.data[to + 1] = world[from + 1];
+                image.data[to + 2] = world[from + 2];
+                image.data[to + 3] = world[from + 3];
+            }
+        }
+        return image;
+    }
+
+    function drawMaskPreview(contextImage) {
+        const mask = maskCtx.createImageData(CONTEXT_SIZE, CONTEXT_SIZE);
+        const offset = (CONTEXT_SIZE - PATCH_SIZE) / 2;
+        for (let y = 0; y < CONTEXT_SIZE; y++) {
+            for (let x = 0; x < CONTEXT_SIZE; x++) {
+                const i = (y * CONTEXT_SIZE + x) * 4;
+                const inPatch = x >= offset && x < offset + PATCH_SIZE
+                    && y >= offset && y < offset + PATCH_SIZE;
+                const value = contextImage.data[i + 3] === 255 && !inPatch ? 255 : 0;
+                mask.data[i] = mask.data[i + 1] = mask.data[i + 2] = value;
+                mask.data[i + 3] = 255;
+            }
+        }
+        maskCtx.putImageData(mask, 0, 0);
+    }
+
+    function patchRect(corner) {
+        return {
+            x: corner.x + (CONTEXT_SIZE - PATCH_SIZE) / 2,
+            y: corner.y + (CONTEXT_SIZE - PATCH_SIZE) / 2,
+            width: PATCH_SIZE,
+            height: PATCH_SIZE,
+        };
+    }
+
+    function drawOverlay() {
+        overlayCtx.clearRect(0, 0, WORLD_SIZE, WORLD_SIZE);
+        const drawPatch = (job, color, fill) => {
+            const rect = patchRect(job);
+            overlayCtx.fillStyle = fill;
+            overlayCtx.fillRect(rect.x, rect.y, rect.width, rect.height);
+            overlayCtx.strokeStyle = color;
+            overlayCtx.lineWidth = 2;
+            overlayCtx.strokeRect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
+        };
+
+        for (const job of queue) drawPatch(job, "rgba(40,216,232,.95)", "rgba(40,216,232,.12)");
+        if (activeJob) {
+            drawPatch(activeJob, "rgba(40,216,232,.95)", "rgba(40,216,232,.2)");
+            const rect = patchRect(activeJob);
+            const average = generationTimes.length
+                ? generationTimes.reduce((sum, time) => sum + time, 0) / generationTimes.length
+                : 12000;
+            const progress = Math.min((performance.now() - generationStartedAt) / average, 1);
+            overlayCtx.beginPath();
+            overlayCtx.moveTo(rect.x + rect.width / 2, rect.y + rect.height / 2);
+            overlayCtx.arc(rect.x + rect.width / 2, rect.y + rect.height / 2, 22, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+            overlayCtx.closePath();
+            overlayCtx.fillStyle = "rgba(40,216,232,.85)";
+            overlayCtx.fill();
+        }
+        if (cursorVisible) {
+            const corner = currentCorner();
+            overlayCtx.strokeStyle = "rgba(0,230,160,.95)";
+            overlayCtx.lineWidth = 2;
+            overlayCtx.strokeRect(corner.x + 1, corner.y + 1, CONTEXT_SIZE - 2, CONTEXT_SIZE - 2);
+            const rect = patchRect(corner);
+            overlayCtx.fillStyle = "rgba(255,93,104,.16)";
+            overlayCtx.fillRect(rect.x, rect.y, rect.width, rect.height);
+            overlayCtx.strokeStyle = "rgba(255,93,104,.95)";
+            overlayCtx.strokeRect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
+        }
+        window.requestAnimationFrame(drawOverlay);
+    }
+
+    function imageFromBase64(base64) {
+        return new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("The server returned an unreadable image."));
+            image.src = `data:image/png;base64,${base64}`;
+        });
+    }
+
+    function pasteGeneratedPatch(corner) {
+        // Copy native-resolution pixels, without resampling roads or context.
+        const offset = (CONTEXT_SIZE - PATCH_SIZE) / 2;
+        const pixels = resultCtx.getImageData(offset, offset, PATCH_SIZE, PATCH_SIZE).data;
+        const originX = corner.x + (CONTEXT_SIZE - PATCH_SIZE) / 2;
+        const originY = corner.y + (CONTEXT_SIZE - PATCH_SIZE) / 2;
+        for (let y = 0; y < PATCH_SIZE; y++) {
+            const worldY = originY + y;
+            if (worldY < 0 || worldY >= WORLD_SIZE) continue;
+            for (let x = 0; x < PATCH_SIZE; x++) {
+                const worldX = originX + x;
+                if (worldX < 0 || worldX >= WORLD_SIZE) continue;
+                const from = (y * PATCH_SIZE + x) * 4;
+                const to = (worldY * WORLD_SIZE + worldX) * 4;
+                world[to] = pixels[from];
+                world[to + 1] = pixels[from + 1];
+                world[to + 2] = pixels[from + 2];
+                world[to + 3] = 255;
+            }
+        }
+        ctx.putImageData(worldImage, 0, 0);
+    }
+
+    async function processQueue() {
+        if (processing) return;
+        processing = true;
+        try {
+            while (queue.length) {
+                const job = queue.shift();
+                if (job.revision !== worldRevision) continue;
+                activeJob = job;
+                generationStartedAt = performance.now();
+                const contextImage = buildContext(job);
+                contextCtx.putImageData(contextImage, 0, 0);
+                drawMaskPreview(contextImage);
+                setStatus(`Generating patch… ${queue.length ? `(${queue.length} queued)` : ""}`);
+
+                const controller = new AbortController();
+                activeController = controller;
+                try {
+                    const response = await fetch("/generate", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        signal: controller.signal,
+                        body: JSON.stringify({
+                            image_b64: contextCanvas.toDataURL("image/png").split(",")[1],
+                            mask_b64: maskCanvas.toDataURL("image/png").split(",")[1],
+                            conditions: job.conditions,
+                            num_inference_steps: job.steps,
+                        }),
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.detail || `Request failed (${response.status})`);
+                    if (job.revision !== worldRevision) continue;
+
+                    const image = await imageFromBase64(result.image_b64);
+                    if (job.revision !== worldRevision) continue;
+                    resultCtx.clearRect(0, 0, CONTEXT_SIZE, CONTEXT_SIZE);
+                    if (image.width !== CONTEXT_SIZE || image.height !== CONTEXT_SIZE) {
+                        throw new Error("Expected a native 512×512 result from the server.");
+                    }
+                    resultCtx.imageSmoothingEnabled = false;
+                    resultCtx.drawImage(image, 0, 0);
+                    pasteGeneratedPatch(job);
+                    generationTimes.push(performance.now() - generationStartedAt);
+                    if (generationTimes.length > 20) generationTimes.shift();
+                    setStatus(`Patch generated · seed ${result.seed} · ${result.inference_steps} steps${queue.length ? ` · ${queue.length} queued` : ""}`);
+                } catch (error) {
+                    if (error.name !== "AbortError") setStatus(error.message || "Generation failed.", true);
+                } finally {
+                    if (activeController === controller) activeController = null;
+                    activeJob = null;
+                }
+            }
+        } finally {
+            processing = false;
+        }
+    }
+
+    function updateMouse(event) {
+        const rect = canvas.getBoundingClientRect();
+        mouse = {
+            x: (event.clientX - rect.left) * WORLD_SIZE / rect.width,
+            y: (event.clientY - rect.top) * WORLD_SIZE / rect.height,
+        };
+    }
+    stage.addEventListener("pointermove", updateMouse);
+    stage.addEventListener("pointerenter", () => { cursorVisible = true; });
+    stage.addEventListener("pointerleave", () => { cursorVisible = false; });
+    stage.addEventListener("click", event => {
+        updateMouse(event);
+        const corner = currentCorner();
+        queue.push({
+            ...corner, id: nextJobId++, revision: worldRevision,
+            conditions: [...conditions],
+            steps: Number(document.getElementById("inferenceSteps").value),
+        });
+        setStatus(`Patch queued · ${queue.length + (activeJob ? 1 : 0)} waiting`);
+        processQueue();
+    });
+
+    document.getElementById("reset").addEventListener("click", clearWorld);
+    document.getElementById("download").addEventListener("click", () => {
+        const link = document.createElement("a");
+        link.download = "city-diffusion-world.png";
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+    });
+    document.getElementById("inferenceSteps").addEventListener("input", event => {
+        document.getElementById("stepsValue").textContent = event.target.value;
+    });
+    setConditions(conditions);
+
+    clearWorld();
+    drawOverlay();
+})();
+</script>
+</body>
+</html>
