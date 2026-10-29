@@ -4,9 +4,11 @@ CityDiffusion2 is a diffusion model trained to generate stylized city maps, one 
 
 The model works directly in 512×512 RGB pixel space with a six-level U-Net (64, 96, 128, 256, 384, and 512 channels; two residual layers per level). It predicts RGB velocity from 11 input channels: noisy RGB, a preserve/generate mask, masked RGB context, and spatially broadcast rural, urban, water, and condition-present values. DDIM sampling iteratively generates the image while keeping known context pixels intact.
 
-## Sped up demo of editor
+## Sped up demo of editor tool
 
 ![CityDiffusion2 demo](docs/citygen2_output2.gif)
+
+## Training data sample
 
 ![100 tiles from the training dataset, labeled Urban, Rural, Water](docs/training_data.png)
 
