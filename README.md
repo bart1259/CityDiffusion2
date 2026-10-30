@@ -123,3 +123,15 @@ Run these stages in order. The OSM data and generated tile dataset are not inclu
 Usually trains within 20 hours on 8 v100s.
 
 The notebook expects `pyrosm`, GeoPandas, and its configuration in `training/`. The tile renderer consumes the cache manifest it creates. The trainer consumes the rendered PNG dataset and its metadata CSV.
+
+
+## Additional photos
+
+### Editor
+![Photo of Editor](docs/EditorPhoto.png)
+
+### Sample 4k (8km x 8km) city
+![4K city](docs/city_4096.png)
+
+### Training Progress
+![Training Progress](docs/training_progress_sample_00.png)
